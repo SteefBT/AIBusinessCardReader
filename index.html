@@ -1,0 +1,889 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Visitekaartje Scanner</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* Layout: one centred column; intake, toolbar, then one panel per scanned card. */
+  :root {
+    --bg: #f5f6f8; --surface: #ffffff; --text: #1d2330; --muted: #5f6b7e;
+    --border: #d9dde5; --accent: #0f6cbd; --accent-text: #ffffff;
+    --ok: #127a3c; --err: #b42318; --field: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171c; --surface: #1d2129; --text: #e7e9ee; --muted: #9aa3b2;
+      --border: #333a46; --accent: #4ca3f0; --accent-text: #0b1420;
+      --ok: #4cc27a; --err: #f07167; --field: #161a21; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171c; --surface: #1d2129; --text: #e7e9ee; --muted: #9aa3b2;
+    --border: #333a46; --accent: #4ca3f0; --accent-text: #0b1420;
+    --ok: #4cc27a; --err: #f07167; --field: #161a21; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  header { padding-block: 20px 8px; max-width: 1000px; margin: 0 auto; }
+  header h1 { margin: 0 0 4px; font-size: 22px; text-wrap: balance; }
+  header p { margin: 0; color: var(--muted); }
+  main { max-width: 1000px; margin: 0 auto; padding-block: 8px 48px; }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .card > div { min-width: 0; }
+
+  .intake {
+    border: 2px dashed var(--border); border-radius: 12px; padding: 20px;
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: var(--surface);
+  }
+  .intake.drag { border-color: var(--accent); }
+  .intake .hint { color: var(--muted); margin: 0; flex-basis: 100%; font-size: 13px; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: 8px 14px; border-radius: 8px; font: inherit; font-size: 14px;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .btn.small { padding: 5px 10px; font-size: 13px; }
+  .btn:disabled { opacity: .5; cursor: default; }
+
+  .toolbar {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    margin: 16px 0; padding: 12px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 12px;
+  }
+  .toolbar .spacer { flex: 1; }
+  .toolbar label { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; }
+
+  .card {
+    display: grid; grid-template-columns: 280px 1fr; gap: 16px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  @media (max-width: 720px) { .card { grid-template-columns: 1fr; } }
+  .card .preview img {
+    width: 100%; border-radius: 8px; border: 1px solid var(--border); display: block;
+    transition: transform .2s;
+  }
+  .card .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .status { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+  @media (max-width: 480px) { .fields { grid-template-columns: 1fr; } }
+  .fields label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 2px; }
+  .fields input {
+    font: inherit; font-size: 14px; color: var(--text); background: var(--field);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; width: 100%;
+  }
+  .fields input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  details { margin-top: 10px; font-size: 13px; }
+  details pre {
+    white-space: pre-wrap; background: var(--field); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px; margin: 6px 0 0; max-height: 200px; overflow: auto;
+  }
+  .card-foot { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .help { color: var(--muted); font-size: 13px; margin-top: 24px; }
+  .help h2 { font-size: 15px; color: var(--text); }
+  .help p { max-width: 70ch; }
+  .help a, .settings a { color: var(--accent); }
+  .settings {
+    margin-top: 12px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 10px 14px;
+  }
+  .settings summary { cursor: pointer; font-size: 14px; }
+  .settings-body p { color: var(--muted); font-size: 13px; max-width: 70ch; }
+</style>
+<header>
+  <h1>Visitekaartje Scanner</h1>
+  <p>Fotografeer of upload visitekaartjes, controleer de herkende gegevens en exporteer ze naar Outlook.</p>
+</header>
+<main>
+  <section class="intake" id="intake">
+    <label class="btn primary">📷 Foto maken
+      <input type="file" accept="image/*" capture="environment" id="camInput" hidden>
+    </label>
+    <label class="btn">🖼️ Afbeeldingen kiezen
+      <input type="file" accept="image/*" multiple id="fileInput" hidden>
+    </label>
+    <p class="hint">Je kunt afbeeldingen ook hierheen slepen of plakken (Ctrl+V). <span id="privacyHint"></span></p>
+  </section>
+
+  <details class="settings" id="settings" hidden>
+    <summary>Herkenning: <b id="engineLabel"></b></summary>
+    <div class="settings-body">
+      <p>Met een Gemini API-sleutel leest Google Gemini de kaartjes; dat is veel nauwkeuriger. Zonder sleutel leest de app
+        de kaartjes zelf in je browser (Tesseract). Je sleutel wordt alleen in deze browser bewaard.
+        Een sleutel maak je aan in <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>.</p>
+      <div class="fields">
+        <label>Gemini API-sleutel<input id="geminiKey" type="password" autocomplete="off" spellcheck="false"></label>
+        <label>Model<input id="geminiModel" type="text" autocomplete="off" spellcheck="false"></label>
+      </div>
+      <div class="card-foot">
+        <button class="btn small primary" id="saveKey">Opslaan en testen</button>
+        <button class="btn small" id="clearKey">Sleutel wissen</button>
+      </div>
+      <p class="status" id="settingsStatus"></p>
+    </div>
+  </details>
+
+  <section class="toolbar" id="toolbar" hidden>
+    <span id="count"></span>
+    <label><input type="checkbox" id="optNote"> Herkende tekst als notitie toevoegen</label>
+    <span class="spacer"></span>
+    <button class="btn" id="dlCsv">Outlook CSV</button>
+    <button class="btn" id="dlAll" hidden>Alles in één .vcf</button>
+    <button class="btn primary" id="dlZip">Download .zip met vcf-bestanden</button>
+  </section>
+  <p class="status" id="exportStatus"></p>
+
+  <section id="cards"></section>
+
+  <section class="help">
+    <h2>Importeren in Outlook</h2>
+    <p><b>Nieuwe Outlook en Outlook.com:</b> ga naar Contactpersonen → <i>Contactpersonen beheren</i> → <i>Importeren</i>
+      en kies het CSV-bestand. Zo komen alle kaartjes in één keer binnen.</p>
+    <p><b>Klassieke Outlook (desktop):</b> pak de .zip uit, dubbelklik op een .vcf-bestand en kies <i>Opslaan en sluiten</i>.
+      De zip bevat één bestand per contact, omdat klassieke Outlook uit een gecombineerd bestand alleen het eerste contact leest.</p>
+    <p><b>Telefoon:</b> open <i>alle-contacten.vcf</i> uit de zip; de contacten-app voegt ze toe. Synchroniseert je telefoon
+      met je Outlook-account, dan komen ze daar ook terecht.</p>
+  </section>
+</main>
+
+<script>
+const FIELDS = [
+  ['prefix', 'Aanhef / titel (dr., ir.)'], ['firstName', 'Voornaam'], ['lastName', 'Achternaam'],
+  ['company', 'Bedrijf'], ['title', 'Functie'], ['email', 'E-mail', 'email'],
+  ['mobile', 'Mobiel', 'tel'], ['phone', 'Telefoon (werk)', 'tel'], ['website', 'Website', 'url'],
+  ['street', 'Straat + huisnummer'], ['postcode', 'Postcode'], ['city', 'Plaats'], ['country', 'Land'],
+];
+
+const cards = [];
+let nextId = 1;
+
+// ---------- Intake ----------
+
+const intake = document.getElementById('intake');
+document.getElementById('camInput').addEventListener('change', e => { addFiles(e.target.files); e.target.value = ''; });
+document.getElementById('fileInput').addEventListener('change', e => { addFiles(e.target.files); e.target.value = ''; });
+['dragenter', 'dragover'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); intake.classList.add('drag'); }));
+['dragleave', 'drop'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); intake.classList.remove('drag'); }));
+document.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+document.addEventListener('paste', e => {
+  const files = [...e.clipboardData.items].filter(i => i.type.startsWith('image/')).map(i => i.getAsFile());
+  if (files.length) addFiles(files);
+});
+
+async function addFiles(fileList) {
+  for (const file of [...fileList]) {
+    if (!file.type.startsWith('image/')) continue;
+    const img = new Image();
+    img.src = URL.createObjectURL(file);
+    try { await img.decode(); } catch { continue; }
+    const card = { id: nextId++, file, img, rotation: 0, fields: {}, raw: '' };
+    cards.push(card);
+    renderCard(card);
+    enqueue(card);
+  }
+  updateToolbar();
+}
+
+// ---------- Runtime ----------
+// Published on claude.ai, Claude reads the card and files are saved via the
+// downloads capability. Elsewhere (own hosting or a local file), Gemini reads
+// the card when an API key is set, otherwise Tesseract does the OCR.
+
+const inArtifact = !!(window.claude && window.claude.use);
+const runtime = { sample: null, downloads: null };
+const runtimeReady = (async () => {
+  if (!inArtifact) return;
+  const [sample, downloads] = await Promise.all([claude.use('sample'), claude.use('downloads')]);
+  const limits = sample ? await sample.limits().catch(() => null) : null;
+  runtime.sample = limits && limits.images ? sample : null;
+  runtime.downloads = downloads;
+})();
+
+// Browser storage with an in-memory fallback, so settings still work for this
+// session when storage is blocked (private window, blocked site data).
+const memoryStore = {};
+const store = {
+  get(k) { try { return localStorage.getItem(k) || memoryStore[k] || ''; } catch { return memoryStore[k] || ''; } },
+  set(k, v) {
+    memoryStore[k] = v;
+    try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {}
+  },
+};
+const GEMINI_DEFAULT_MODEL = 'gemini-3.8-flash';
+const gemini = {
+  key: () => store.get('geminiKey'),
+  model: () => store.get('geminiModel') || GEMINI_DEFAULT_MODEL,
+};
+
+function updateEngineLabel() {
+  const useGemini = !!gemini.key();
+  document.getElementById('engineLabel').textContent = useGemini ? `Google Gemini (${gemini.model()})` : 'Tesseract, in je browser';
+  document.getElementById('privacyHint').textContent = useGemini
+    ? "Foto's worden naar Google Gemini gestuurd om te lezen."
+    : 'Alles wordt lokaal in je browser verwerkt.';
+}
+
+if (!inArtifact) {
+  document.getElementById('settings').hidden = false;
+  document.getElementById('dlAll').hidden = false;
+  document.getElementById('geminiKey').value = gemini.key();
+  document.getElementById('geminiModel').value = gemini.model();
+  updateEngineLabel();
+}
+
+const settingsStatus = document.getElementById('settingsStatus');
+document.getElementById('saveKey').addEventListener('click', async () => {
+  const key = document.getElementById('geminiKey').value.trim();
+  const model = document.getElementById('geminiModel').value.trim() || GEMINI_DEFAULT_MODEL;
+  if (!key) { settingsStatus.textContent = 'Vul eerst een API-sleutel in.'; settingsStatus.className = 'status err'; return; }
+  settingsStatus.textContent = 'Sleutel testen…';
+  settingsStatus.className = 'status';
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}`, {
+      headers: { 'x-goog-api-key': key },
+    });
+    if (!res.ok) throw new Error(await geminiError(res, model));
+    store.set('geminiKey', key);
+    store.set('geminiModel', model === GEMINI_DEFAULT_MODEL ? '' : model);
+    settingsStatus.textContent = 'Opgeslagen. Nieuwe kaartjes worden door Gemini gelezen.';
+    settingsStatus.className = 'status ok';
+  } catch (e) {
+    settingsStatus.textContent = e.message === 'Failed to fetch' ? 'Geen verbinding met Google. Controleer je internetverbinding.' : e.message;
+    settingsStatus.className = 'status err';
+  }
+  updateEngineLabel();
+});
+document.getElementById('clearKey').addEventListener('click', () => {
+  store.set('geminiKey', '');
+  document.getElementById('geminiKey').value = '';
+  settingsStatus.textContent = 'Sleutel gewist. De app gebruikt weer Tesseract.';
+  settingsStatus.className = 'status';
+  updateEngineLabel();
+});
+
+// ---------- Recognition ----------
+
+let workerPromise = null;
+let tesseractPromise = null;
+let currentCard = null;
+let queue = Promise.resolve();
+
+function loadTesseract() {
+  if (!tesseractPromise) {
+    tesseractPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+      s.onload = resolve;
+      s.onerror = () => { tesseractPromise = null; reject(new Error('OCR-bibliotheek kon niet laden')); };
+      document.head.appendChild(s);
+    });
+  }
+  return tesseractPromise;
+}
+
+async function getWorker() {
+  await loadTesseract();
+  if (!workerPromise) {
+    workerPromise = Tesseract.createWorker('nld+eng', 1, {
+      logger: m => {
+        if (!currentCard) return;
+        if (m.status === 'recognizing text') setStatus(currentCard, `Tekst herkennen… ${Math.round(m.progress * 100)}%`);
+        else setStatus(currentCard, 'OCR voorbereiden (eerste keer duurt even)…');
+      },
+    });
+    workerPromise.catch(() => { workerPromise = null; });
+  }
+  return workerPromise;
+}
+
+function enqueue(card, fresh) {
+  setStatus(card, 'In de wachtrij…');
+  queue = queue.then(() => recognize(card, fresh));
+}
+
+const CARD_PROMPT = `Dit is een foto van een visitekaartje. Lees de contactgegevens en antwoord met alleen één JSON-object met precies deze sleutels (lege string als iets ontbreekt):
+{"prefix":"","firstName":"","lastName":"","company":"","title":"","email":"","mobile":"","phone":"","website":"","street":"","postcode":"","city":"","country":"","rawText":""}
+Regels:
+- prefix: aanhef of academische titel zoals dr., ir., mr., prof.
+- Tussenvoegsels (van, de, van der) horen bij lastName, in kleine letters.
+- Schrijf namen met gewone hoofdletters, ook als ze op het kaartje in kapitalen staan.
+- title: de functie. company: de bedrijfsnaam.
+- mobile: het mobiele nummer; phone: het vaste of kantoornummer. Neem nummers over zoals ze erop staan, maar laat "(0)" weg. Faxnummers niet opnemen.
+- street: straat en huisnummer (of postbus). postcode zoals "1234 AB".
+- rawText: alle tekst op het kaartje, regel voor regel.
+- Verzin niets. Staat het niet op het kaartje, laat het veld leeg.
+- Staan er meerdere kaartjes op de foto, gebruik dan het grootste.`;
+
+const SAMPLE_ERRORS = {
+  not_granted: 'Claude heeft geen toestemming gekregen. Vul de gegevens zelf in.',
+  sampling_disabled: 'Claude is niet beschikbaar voor dit account. Vul de gegevens zelf in.',
+  rate_limited: 'Te veel kaartjes tegelijk. Wacht even en klik op "Opnieuw herkennen".',
+  image_rejected: 'Deze afbeelding wordt niet geaccepteerd. Probeer een JPG- of PNG-foto.',
+  refused: 'Dit kaartje kon niet gelezen worden. Vul de gegevens zelf in.',
+  invalid_json: 'Het antwoord was onleesbaar. Klik op "Opnieuw herkennen".',
+};
+
+// The card as a rotated JPEG, at most maxSide pixels on its longest side.
+function cardJpeg(card, maxSide = 2000) {
+  const { img, rotation } = card;
+  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+  const c = document.createElement('canvas');
+  const swap = rotation % 180 !== 0;
+  c.width = swap ? h : w;
+  c.height = swap ? w : h;
+  const ctx = c.getContext('2d');
+  ctx.translate(c.width / 2, c.height / 2);
+  ctx.rotate(rotation * Math.PI / 180);
+  ctx.drawImage(img, -w / 2, -h / 2, w, h);
+  return new Promise(r => c.toBlob(r, 'image/jpeg', 0.9));
+}
+
+function toCardResult(result) {
+  const fields = Object.fromEntries(FIELDS.map(([k]) => [k, typeof result?.[k] === 'string' ? result[k].trim() : '']));
+  return { raw: typeof result?.rawText === 'string' ? result.rawText : '', fields };
+}
+
+async function recognizeWithClaude(card, fresh) {
+  setStatus(card, 'Claude leest het kaartje…');
+  const result = await runtime.sample.json(CARD_PROMPT, {
+    images: [await cardJpeg(card)],
+    ...(fresh ? { cache: false } : {}),
+  });
+  return toCardResult(result);
+}
+
+async function geminiError(res, model) {
+  let detail = '';
+  try { detail = (await res.json()).error.message || ''; } catch {}
+  if (res.status === 400 && /api key/i.test(detail)) return 'De Gemini API-sleutel is ongeldig. Controleer hem bij Instellingen.';
+  if (res.status === 403) return 'Deze API-sleutel heeft geen toegang tot Gemini. Controleer de sleutel in Google AI Studio.';
+  if (res.status === 404) return `Het model "${model}" bestaat niet (meer). Vul bij Instellingen een ander model in.`;
+  if (res.status === 429) return 'Het Gemini-tegoed of de limiet is bereikt. Wacht even of controleer je abonnement.';
+  return `Gemini gaf een fout (${res.status})${detail ? ': ' + detail : ''}.`;
+}
+
+const blobToBase64 = blob => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result).split(',')[1]);
+  r.onerror = () => reject(r.error);
+  r.readAsDataURL(blob);
+});
+
+async function recognizeWithGemini(card) {
+  setStatus(card, 'Gemini leest het kaartje…');
+  const model = gemini.model();
+  const keys = [...FIELDS.map(([k]) => k), 'rawText'];
+  let res;
+  try {
+    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gemini.key() },
+      body: JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: [{ text: CARD_PROMPT }, { inline_data: { mime_type: 'image/jpeg', data: await blobToBase64(await cardJpeg(card)) } }],
+        }],
+        generationConfig: {
+          temperature: 0,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: 'OBJECT',
+            properties: Object.fromEntries(keys.map(k => [k, { type: 'STRING' }])),
+            required: keys,
+          },
+        },
+      }),
+    });
+  } catch {
+    throw new Error('Geen verbinding met Google Gemini. Controleer je internetverbinding.');
+  }
+  if (!res.ok) throw new Error(await geminiError(res, model));
+  const data = await res.json();
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  const text = parts.filter(p => !p.thought && typeof p.text === 'string').map(p => p.text).join('');
+  if (!text) {
+    const reason = data.promptFeedback?.blockReason || data.candidates?.[0]?.finishReason || 'onbekend';
+    throw new Error(`Gemini gaf geen antwoord (reden: ${reason}).`);
+  }
+  try {
+    return toCardResult(JSON.parse(text));
+  } catch {
+    throw new Error('Het antwoord van Gemini was onleesbaar. Klik op "Opnieuw herkennen".');
+  }
+}
+
+async function recognizeWithTesseract(card) {
+  setStatus(card, 'Afbeelding voorbereiden…');
+  const canvas = preprocess(card.img, card.rotation);
+  const worker = await getWorker();
+  const { data } = await worker.recognize(canvas);
+  return { raw: data.text, fields: parseCard(data.text) };
+}
+
+async function recognize(card, fresh) {
+  if (!cards.includes(card)) return;
+  currentCard = card;
+  try {
+    await runtimeReady;
+    let out;
+    if (runtime.sample) {
+      out = await recognizeWithClaude(card, fresh);
+    } else if (inArtifact) {
+      setStatus(card, 'Automatisch herkennen is hier niet beschikbaar. Vul de gegevens zelf in.', 'err');
+      return;
+    } else if (gemini.key()) {
+      out = await recognizeWithGemini(card);
+    } else {
+      out = await recognizeWithTesseract(card);
+    }
+    card.raw = out.raw;
+    card.fields = out.fields;
+    fillForm(card);
+    const found = Object.values(card.fields).filter(Boolean).length;
+    setStatus(card, found
+      ? `Klaar: ${found} velden herkend. Controleer en corrigeer waar nodig.`
+      : 'Weinig herkend. Probeer te draaien of maak een scherpere foto.', found ? 'ok' : 'err');
+  } catch (e) {
+    console.error(e);
+    const msg = e && e.code ? (SAMPLE_ERRORS[e.code] || 'Herkennen mislukt. Klik op "Opnieuw herkennen".')
+      : (e && e.message || String(e));
+    setStatus(card, msg, 'err');
+  } finally {
+    currentCard = null;
+  }
+}
+
+// Scale, rotate, grayscale and stretch contrast; invert light-on-dark cards.
+function preprocess(img, rotation) {
+  const w = img.naturalWidth, h = img.naturalHeight;
+  let scale = Math.min(1, 2400 / Math.max(w, h));
+  if (Math.max(w, h) * scale < 1400) scale = 1400 / Math.max(w, h);
+  const sw = Math.round(w * scale), sh = Math.round(h * scale);
+  const swap = rotation % 180 !== 0;
+  const c = document.createElement('canvas');
+  c.width = swap ? sh : sw;
+  c.height = swap ? sw : sh;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.translate(c.width / 2, c.height / 2);
+  ctx.rotate(rotation * Math.PI / 180);
+  ctx.drawImage(img, -sw / 2, -sh / 2, sw, sh);
+
+  const data = ctx.getImageData(0, 0, c.width, c.height);
+  const p = data.data, n = p.length / 4;
+  const gray = new Uint8ClampedArray(n);
+  const hist = new Uint32Array(256);
+  let sum = 0;
+  for (let i = 0, j = 0; j < n; i += 4, j++) {
+    const v = 0.299 * p[i] + 0.587 * p[i + 1] + 0.114 * p[i + 2];
+    gray[j] = v; hist[gray[j]]++; sum += gray[j];
+  }
+  let lo = 0, hi = 255, acc = 0;
+  for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc > n * 0.02) { lo = i; break; } }
+  acc = 0;
+  for (let i = 255; i >= 0; i--) { acc += hist[i]; if (acc > n * 0.02) { hi = i; break; } }
+  const range = Math.max(1, hi - lo);
+  const invert = sum / n < 110;
+  for (let i = 0, j = 0; j < n; i += 4, j++) {
+    let v = (gray[j] - lo) * 255 / range;
+    if (invert) v = 255 - v;
+    p[i] = p[i + 1] = p[i + 2] = v;
+  }
+  ctx.putImageData(data, 0, 0);
+  return c;
+}
+
+// ---------- Parsing ----------
+
+const TITLE_RE = /\b(directeur|director|manager|eigenaar|zaakvoerder|zaakvoerster|owner|founder|co-?founder|oprichter|ceo|cto|cfo|coo|cmo|cio|adviseur|advisor|adviser|consultant|partner|sales|account ?manager|engineer|ingenieur|developer|ontwikkelaar|specialist|medewerker|assistent|assistant|head of|hoofd|lead|officer|co[öo]rdinator|advocaat|notaris|architect|designer|ontwerper|projectleider|project ?manager|teamleider|bedrijfsleider|vertegenwoordiger|representative|executive|president|analyst|analist|makelaar|commercieel|marketing|recruiter|secretaris|secretary|voorzitter|chairman|technicus|monteur|fotograaf|trainer|coach|docent|business|support|manager|management|beheerder|administrator|planner|inkoper|buyer|controller|boekhouder|accountant|therapeut|fysiotherapeut|tandarts|huisarts|verpleegkundige)\b/i;
+const COMPANY_RE = /(\bb\.\s?v\.?|\bbv\b|\bn\.\s?v\.?|\bv\.o\.f\.?|\bvof\b|\bholding\b|\bgroup\b|\bgroep\b|\bgmbh\b|\bltd\b|\binc\b|\bllc\b|\bbvba\b|\bvzw\b|\bsrl\b|\b& co\b|\ben zn\b|\badvocaten\b|\bnotarissen\b|\baccountants\b|\bconsultancy\b|\bsolutions\b|\bservices\b|\bdiensten\b|\bmakelaars\b|\barchitecten\b|\bsystems\b|\btechnologies\b|\bstudio\b|\bbureau\b|\bagency\b)/i;
+const STREET_RE = /(straat|str\.|weg|laan|plein|gracht|kade|singel|dreef|park|hof|dijk|steeg|pad|markt|baan|boulevard|allee|wal|haven|veld|street|road|avenue|ave\.|lane|drive|rue|strasse|straße|postbus|p\.o\. box)/i;
+const PREFIX_RE = /^(prof|dr|drs|ir|ing|mr|ds|bc|ba|ma|msc|bsc|dhr|mevr|mw|mevrouw|meneer)\.?$/i;
+const PARTICLES = new Set(['van', 'de', 'der', 'den', 'het', "'t", 'ter', 'ten', 'te', 'in', 'op', 'von', 'du', 'da', 'di', 'la', 'le', 'del', 'dos']);
+const GENERIC_MAIL = /^(gmail|googlemail|hotmail|outlook|live|msn|yahoo|icloud|me|ziggo|kpnmail|kpnplanet|planet|home|xs4all|hetnet|telfort|chello|upcmail|caiway|zeelandnet|online|quicknet|proton|protonmail|skynet|telenet|gmx|web)$/i;
+const COUNTRY_RE = /^(nederland|the netherlands|netherlands|holland|belgi[eë]|belgium|belgique|deutschland|germany|duitsland|france|frankrijk|luxembourg|luxemburg|united kingdom|uk)$/i;
+
+function cleanLine(l) {
+  return l.replace(/[|«»_~{}\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function titleCase(s) {
+  return s.split(' ').map((w, i) => {
+    const lw = w.toLowerCase();
+    if (i > 0 && PARTICLES.has(lw)) return lw;
+    return lw.replace(/(^|[-'’])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+  }).join(' ');
+}
+
+function normalizePhone(s) {
+  return s.replace(/\(\s*0\s*\)/g, ' ').replace(/[^\d+]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function stripAccents(s) {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+function parseCard(text) {
+  const f = Object.fromEntries(FIELDS.map(([k]) => [k, '']));
+  // Fix common OCR artefacts around e-mail addresses.
+  text = text.replace(/\s*@\s*/g, '@').replace(/\s*\(at\)\s*/gi, '@');
+  const lines = text.split(/\r?\n/).map(cleanLine).filter(l => l.length > 1);
+  const rest = [...lines]; // what is left of each line after removing recognised parts
+  const take = (i, match) => { rest[i] = cleanLine(rest[i].replace(match, ' ')); };
+
+  // E-mail
+  const emailRe = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
+  for (let i = 0; i < rest.length && !f.email; i++) {
+    const m = rest[i].match(emailRe);
+    if (m) { f.email = m[0].replace(/[.,;]+$/, '').toLowerCase(); take(i, m[0]); }
+  }
+
+  // Phone numbers
+  const phoneRe = /(?:\+|00)?\d[\d \-–().\/]{7,20}\d/g;
+  for (let i = 0; i < rest.length; i++) {
+    if (/\b(btw|vat|kvk|k\.v\.k|coc|iban|bic|swift|ust|rsin|bank)\b/i.test(rest[i])) continue;
+    let line = rest[i];
+    for (const m of [...line.matchAll(phoneRe)]) {
+      const digits = m[0].replace(/\D/g, '');
+      if (digits.length < 9 || digits.length > 15) continue;
+      const before = line.slice(Math.max(0, m.index - 14), m.index);
+      const number = normalizePhone(m[0]);
+      if (/\b(f|fax)\.?\s*[:.]?\s*$/i.test(before)) { take(i, m[0]); continue; }
+      const labelMobile = /\b(m|mob|mobiel|mobile|gsm|cell|cel|handy)\.?\s*[:.]?\s*$/i.test(before);
+      const labelPhone = /\b(t|tel|telefoon|phone|ph|office|kantoor|vast|direct)\.?\s*[:.]?\s*$/i.test(before);
+      const looksMobile = /^(\+|00)?(316|324|49 ?1[5-7])/.test(number.replace(/\s/g, '')) || /^06/.test(digits);
+      if ((labelMobile || (!labelPhone && looksMobile)) && !f.mobile) f.mobile = number;
+      else if (!f.phone) f.phone = number;
+      else if (!f.mobile) f.mobile = number;
+      take(i, m[0]);
+    }
+  }
+  // Remove leftover labels like "E:", "T:", "Tel.", "Mail".
+  for (let i = 0; i < rest.length; i++) {
+    rest[i] = cleanLine(rest[i].replace(/\b(e-?mail|email|mail|tel|telefoon|phone|mobiel|mobile|gsm|fax|web|website|internet|[etmfwi])\s*[:.]/gi, ' '));
+  }
+
+  // Website
+  const webRe = /\b(?:https?:\/\/)?(?:www\.)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:nl|be|de|com|eu|org|net|io|info|biz|co|uk|fr|es|it|ch|at|dk|se|no|pl|app|dev|tech|online|shop|nu|frl|amsterdam|ai|me|us)\b(?:\/[^\s]*)?/i;
+  for (let i = 0; i < rest.length && !f.website; i++) {
+    const m = rest[i].match(webRe);
+    if (m && /\./.test(m[0]) && (/www\.|https?:|\//i.test(m[0]) || rest[i].trim() === m[0] || m[0].split('.').length >= 2)) {
+      // Avoid catching things like "B.V." or initials.
+      if (/^[a-z]\.[a-z]{1,2}$/i.test(m[0])) continue;
+      f.website = m[0].replace(/[.,;]+$/, '').toLowerCase();
+      take(i, m[0]);
+    }
+  }
+
+  // Postcode + city (NL: 1234 AB, BE/DE: 1234 / 12345)
+  let addrLine = -1;
+  for (let i = 0; i < rest.length && addrLine < 0; i++) {
+    let m = rest[i].match(/\b(?:NL-?\s?)?(\d{4})\s?([A-Z]{2})\b[\s,]*([A-Za-zÀ-ÿ'’\-. ]*)/);
+    if (!m) m = rest[i].match(/\b(?:[BD]-?\s?)?([1-9]\d{3,4})\b()[\s,]+([A-ZÀ-Ý][A-Za-zÀ-ÿ'’\-. ]{2,})$/);
+    if (m) {
+      f.postcode = (m[1] + (m[2] ? ' ' + m[2] : '')).trim();
+      let city = (m[3] || '').trim();
+      const cm = city.match(/^(.*?)[\s,]+(nederland|the netherlands|netherlands|belgi[eë]|belgium|deutschland|germany)$/i);
+      if (cm) { city = cm[1]; f.country = titleCase(cm[2]); }
+      f.city = city ? titleCase(city) : '';
+      const beforePc = rest[i].slice(0, m.index).replace(/[,\s]+$/, '');
+      if (beforePc && /\d/.test(beforePc)) f.street = beforePc;
+      rest[i] = '';
+      addrLine = i;
+    }
+  }
+  // Street
+  if (!f.street) {
+    const streetLike = l => /^[\p{L}.'’\- ]{2,}\s\d{1,5}\s?[a-z]?(\s?[-\/]\s?\w{1,4})?$/iu.test(l) || (STREET_RE.test(l) && /\d/.test(l));
+    const order = addrLine > 0 ? [addrLine - 1, ...rest.keys()] : [...rest.keys()];
+    for (const i of order) {
+      if (rest[i] && streetLike(rest[i])) { f.street = rest[i]; rest[i] = ''; break; }
+    }
+  }
+  // Country
+  for (let i = 0; i < rest.length; i++) {
+    if (COUNTRY_RE.test(rest[i])) { f.country = f.country || titleCase(rest[i]); rest[i] = ''; }
+  }
+
+  // Domain stem from e-mail / website, used to recognise company and name
+  const mailDomain = f.email ? f.email.split('@')[1] : '';
+  const domain = (f.website || mailDomain).replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  let stem = domain.split('.').slice(0, -1).join('').replace(/[^a-z0-9]/g, '');
+  if (GENERIC_MAIL.test(stem) && !f.website) stem = '';
+  const local = f.email ? stripAccents(f.email.split('@')[0]) : '';
+
+  const candidates = rest.map((l, i) => ({ l, i })).filter(c => c.l && /\p{L}{2,}/u.test(c.l));
+  const compact = s => stripAccents(s).replace(/[^a-z0-9]/g, '');
+
+  // Company
+  let companyIdx = -1;
+  for (const c of candidates) {
+    const cc = compact(c.l);
+    if (COMPANY_RE.test(c.l) || (stem.length >= 3 && cc.length >= 3 && (cc.includes(stem) || stem.includes(cc)))) {
+      f.company = c.l; companyIdx = c.i; break;
+    }
+  }
+
+  // Job title
+  let titleIdx = -1;
+  for (const c of candidates) {
+    if (c.i === companyIdx) continue;
+    if (TITLE_RE.test(c.l) && c.l.split(' ').length <= 8) { f.title = c.l; titleIdx = c.i; break; }
+  }
+
+  // Name: best-scoring short line of words
+  let best = null;
+  for (const c of candidates) {
+    if (c.i === companyIdx || c.i === titleIdx) continue;
+    if (!/^[\p{L}'’.\- ]+$/u.test(c.l)) continue;
+    const words = c.l.split(' ').filter(Boolean);
+    const core = words.filter(w => !PREFIX_RE.test(w));
+    if (core.length < 2 || core.length > 5 || c.l.length > 40) continue;
+    let score = 1 - c.i / lines.length;
+    if (core.every(w => /^\p{Lu}/u.test(w) || PARTICLES.has(w.toLowerCase()))) score += 2;
+    if (local) {
+      for (const w of core) {
+        const lw = stripAccents(w).replace(/[^a-z]/g, '');
+        if (lw.length >= 3 && local.includes(lw)) score += 4;
+      }
+    }
+    if (COMPANY_RE.test(c.l)) score -= 3;
+    if (!best || score > best.score) best = { ...c, score };
+  }
+  let nameLine = best ? best.l : '';
+  if (!nameLine && local && /[a-z]{2,}[._-][a-z]{2,}/.test(local) && !/^(info|sales|contact|office|admin|support|hallo|hello|mail)$/.test(local.split(/[._-]/)[0])) {
+    nameLine = local.split(/[._-]/).join(' ');
+  }
+  if (nameLine) {
+    let words = nameLine.split(' ').filter(Boolean);
+    const prefixes = [];
+    while (words.length > 2 && PREFIX_RE.test(words[0])) prefixes.push(words.shift());
+    if (prefixes.length) f.prefix = prefixes.join(' ');
+    const isUpper = nameLine === nameLine.toUpperCase() || nameLine === nameLine.toLowerCase();
+    if (isUpper) words = titleCase(words.join(' ')).split(' ');
+    f.firstName = words[0];
+    f.lastName = words.slice(1).join(' ');
+  }
+  if (f.company && f.company === f.company.toUpperCase() && f.company.length > 4 && !COMPANY_RE.test(f.company)) {
+    f.company = titleCase(f.company);
+  }
+  return f;
+}
+
+// ---------- vCard ----------
+
+function esc(s) {
+  return String(s).replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
+}
+
+function toVCard(card) {
+  const f = readForm(card);
+  const fullName = [f.prefix, f.firstName, f.lastName].filter(Boolean).join(' ') || f.company || f.email || 'Contact';
+  const out = ['BEGIN:VCARD', 'VERSION:3.0'];
+  const cs = ';CHARSET=UTF-8';
+  out.push(`N${cs}:${esc(f.lastName)};${esc(f.firstName)};;${esc(f.prefix)};`);
+  out.push(`FN${cs}:${esc(fullName)}`);
+  if (f.company) out.push(`ORG${cs}:${esc(f.company)}`);
+  if (f.title) out.push(`TITLE${cs}:${esc(f.title)}`);
+  if (f.email) out.push(`EMAIL;TYPE=INTERNET,WORK:${f.email}`);
+  if (f.mobile) out.push(`TEL;TYPE=CELL:${f.mobile}`);
+  if (f.phone) out.push(`TEL;TYPE=WORK,VOICE:${f.phone}`);
+  if (f.website) out.push(`URL;TYPE=WORK:${/^https?:/i.test(f.website) ? f.website : 'https://' + f.website}`);
+  if (f.street || f.city || f.postcode || f.country) {
+    out.push(`ADR;TYPE=WORK${cs}:;;${esc(f.street)};${esc(f.city)};;${esc(f.postcode)};${esc(f.country)}`);
+  }
+  if (document.getElementById('optNote').checked && card.raw.trim()) {
+    out.push(`NOTE${cs}:${esc('Visitekaartje (OCR):\n' + card.raw.trim())}`);
+  }
+  out.push('END:VCARD');
+  return { text: out.join('\r\n') + '\r\n', name: fullName };
+}
+
+// ---------- Export ----------
+
+const CSV_COLUMNS = [
+  ['Title', 'prefix'], ['First Name', 'firstName'], ['Last Name', 'lastName'], ['Company', 'company'],
+  ['Job Title', 'title'], ['E-mail Address', 'email'], ['Mobile Phone', 'mobile'], ['Business Phone', 'phone'],
+  ['Web Page', 'website'], ['Business Street', 'street'], ['Business City', 'city'],
+  ['Business Postal Code', 'postcode'], ['Business Country/Region', 'country'], ['Notes', 'notes'],
+];
+
+function toCsv() {
+  const q = v => '"' + String(v || '').replace(/"/g, '""') + '"';
+  const withNote = document.getElementById('optNote').checked;
+  const rows = cards.map(c => {
+    const f = { ...readForm(c), notes: withNote ? c.raw.trim() : '' };
+    return CSV_COLUMNS.map(([, k]) => q(f[k])).join(',');
+  });
+  return '﻿' + [CSV_COLUMNS.map(([h]) => q(h)).join(','), ...rows].join('\r\n') + '\r\n';
+}
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+function crc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (const b of bytes) crc = CRC_TABLE[(crc ^ b) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+// Minimal uncompressed ZIP writer; files = [{name, text}].
+function makeZip(files) {
+  const enc = new TextEncoder();
+  const now = new Date();
+  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+  const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  const local = [], central = [];
+  let offset = 0, centralSize = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), data = enc.encode(f.text), crc = crc32(data);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true);
+    lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true); lh.setUint32(14, crc, true);
+    lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true); lh.setUint16(26, name.length, true);
+    local.push(lh, name, data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true);
+    ch.setUint16(8, 0x0800, true); ch.setUint16(12, dosTime, true); ch.setUint16(14, dosDate, true);
+    ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true);
+    ch.setUint16(28, name.length, true); ch.setUint32(42, offset, true);
+    central.push(ch, name);
+    offset += 30 + name.length + data.length;
+    centralSize += 46 + name.length;
+  }
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+  end.setUint32(12, centralSize, true); end.setUint32(16, offset, true);
+  return new Blob([...local, ...central, end], { type: 'application/zip' });
+}
+
+const safeName = s => s.replace(/[\\/:*?"<>|]+/g, '').trim().slice(0, 80) || 'contact';
+const today = () => new Date().toISOString().slice(0, 10);
+
+const exportStatus = document.getElementById('exportStatus');
+function setExportStatus(msg, kind) {
+  exportStatus.textContent = msg;
+  exportStatus.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+async function saveFile(filename, data) {
+  await runtimeReady;
+  if (runtime.downloads) {
+    try {
+      await runtime.downloads.save({ filename, data });
+      setExportStatus(`${filename} opgeslagen.`, 'ok');
+    } catch (e) {
+      const msg = { declined: 'Opslaan geannuleerd.', rate_limited: 'Er staat al een opslagvenster open.' }[e && e.code];
+      setExportStatus(msg || 'Opslaan is hier niet beschikbaar.', msg ? '' : 'err');
+    }
+    return;
+  }
+  if (inArtifact) { setExportStatus('Opslaan is hier niet beschikbaar.', 'err'); return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data]));
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+document.getElementById('dlZip').addEventListener('click', () => {
+  if (!cards.length) return;
+  const used = new Set();
+  const files = cards.map(c => {
+    const v = toVCard(c);
+    let base = safeName(v.name), name = base + '.vcf', n = 2;
+    while (used.has(name.toLowerCase())) name = `${base} (${n++}).vcf`;
+    used.add(name.toLowerCase());
+    return { name, text: v.text };
+  });
+  files.push({ name: 'alle-contacten.vcf', text: files.map(f => f.text).join('') });
+  saveFile(`visitekaartjes-${today()}.zip`, makeZip(files));
+});
+document.getElementById('dlAll').addEventListener('click', () => {
+  if (cards.length) saveFile(`visitekaartjes-${today()}.vcf`, cards.map(c => toVCard(c).text).join(''));
+});
+document.getElementById('dlCsv').addEventListener('click', () => {
+  if (cards.length) saveFile(`outlook-contacten-${today()}.csv`, toCsv());
+});
+
+// ---------- UI ----------
+
+function renderCard(card) {
+  const el = document.createElement('article');
+  el.className = 'card';
+  el.innerHTML = `
+    <div class="preview">
+      <img alt="Visitekaartje">
+      <div class="actions">
+        <button class="btn small" data-act="rotate">↻ Draai 90°</button>
+        <button class="btn small" data-act="rescan">Opnieuw herkennen</button>
+      </div>
+      <div class="status"></div>
+    </div>
+    <div>
+      <div class="fields">${FIELDS.map(([k, label, type]) =>
+        `<label>${label}<input name="${k}" type="${type || 'text'}" autocomplete="off"></label>`).join('')}</div>
+      <details><summary>Herkende tekst</summary><pre></pre></details>
+      <div class="card-foot">
+        <button class="btn small primary" data-act="vcf" ${inArtifact ? 'hidden' : ''}>Download .vcf</button>
+        <button class="btn small" data-act="remove">Verwijderen</button>
+      </div>
+    </div>`;
+  el.querySelector('img').src = card.img.src;
+  el.addEventListener('click', e => {
+    const act = e.target.dataset && e.target.dataset.act;
+    if (!act) return;
+    if (act === 'rotate') {
+      card.rotation = (card.rotation + 90) % 360;
+      el.querySelector('img').style.transform = `rotate(${card.rotation}deg) scale(${card.rotation % 180 ? 0.6 : 1})`;
+      enqueue(card);
+    } else if (act === 'rescan') {
+      enqueue(card, true);
+    } else if (act === 'vcf') {
+      const v = toVCard(card);
+      saveFile(safeName(v.name) + '.vcf', v.text);
+    } else if (act === 'remove') {
+      cards.splice(cards.indexOf(card), 1);
+      el.remove();
+      updateToolbar();
+    }
+  });
+  card.el = el;
+  document.getElementById('cards').prepend(el);
+}
+
+function fillForm(card) {
+  for (const [k] of FIELDS) card.el.querySelector(`[name="${k}"]`).value = card.fields[k] || '';
+  card.el.querySelector('pre').textContent = card.raw;
+}
+
+function readForm(card) {
+  return Object.fromEntries(FIELDS.map(([k]) => [k, card.el.querySelector(`[name="${k}"]`).value.trim()]));
+}
+
+function setStatus(card, msg, kind) {
+  const s = card.el.querySelector('.status');
+  s.textContent = msg;
+  s.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+function updateToolbar() {
+  document.getElementById('toolbar').hidden = !cards.length;
+  document.getElementById('count').textContent = `${cards.length} kaartje${cards.length === 1 ? '' : 's'}`;
+}
+</script>
