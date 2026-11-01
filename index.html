@@ -381,33 +381,59 @@ const blobToBase64 = blob => new Promise((resolve, reject) => {
   r.readAsDataURL(blob);
 });
 
+const GEMINI_TIMEOUT_S = 90;
+
 async function recognizeWithGemini(card) {
-  setStatus(card, 'Gemini leest het kaartje…');
   const model = gemini.model();
   const keys = [...FIELDS.map(([k]) => k), 'rawText'];
+  const image = await blobToBase64(await cardJpeg(card));
+  // Gemini 3 models take a thinking level; keep it low, reading a card needs little reasoning.
+  // Google advises leaving temperature at its default for these models.
+  const body = withThinking => JSON.stringify({
+    contents: [{
+      role: 'user',
+      parts: [{ text: CARD_PROMPT }, { inline_data: { mime_type: 'image/jpeg', data: image } }],
+    }],
+    generationConfig: {
+      maxOutputTokens: 8192,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: Object.fromEntries(keys.map(k => [k, { type: 'STRING' }])),
+        required: keys,
+      },
+      ...(withThinking ? { thinkingConfig: { thinkingLevel: 'low' } } : {}),
+    },
+  });
+
+  const started = Date.now();
+  const ctl = new AbortController();
+  const tick = setInterval(() => {
+    const s = Math.round((Date.now() - started) / 1000);
+    setStatus(card, `Gemini leest het kaartje… ${s} s`);
+    if (s >= GEMINI_TIMEOUT_S) ctl.abort();
+  }, 1000);
+  setStatus(card, 'Gemini leest het kaartje…');
+
+  const send = withThinking => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gemini.key() },
+    body: body(withThinking),
+    signal: ctl.signal,
+  });
+
   let res;
   try {
-    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gemini.key() },
-      body: JSON.stringify({
-        contents: [{
-          role: 'user',
-          parts: [{ text: CARD_PROMPT }, { inline_data: { mime_type: 'image/jpeg', data: await blobToBase64(await cardJpeg(card)) } }],
-        }],
-        generationConfig: {
-          temperature: 0,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: 'OBJECT',
-            properties: Object.fromEntries(keys.map(k => [k, { type: 'STRING' }])),
-            required: keys,
-          },
-        },
-      }),
-    });
-  } catch {
+    res = await send(/^gemini-[3-9]/.test(model));
+    // Older models reject thinkingLevel; ask again without it.
+    if (res.status === 400 && /thinking/i.test(await res.clone().text())) res = await send(false);
+  } catch (e) {
+    if (ctl.signal.aborted) {
+      throw new Error(`Gemini gaf na ${GEMINI_TIMEOUT_S} seconden geen antwoord. Klik op "Opnieuw herkennen" of kies bij Herkenning een sneller model, zoals gemini-3.5-flash-lite.`);
+    }
     throw new Error('Geen verbinding met Google Gemini. Controleer je internetverbinding.');
+  } finally {
+    clearInterval(tick);
   }
   if (!res.ok) throw new Error(await geminiError(res, model));
   const data = await res.json();
